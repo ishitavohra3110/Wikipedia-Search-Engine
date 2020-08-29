@@ -5,41 +5,43 @@
 
 
 import xml.etree.ElementTree as ET
-import string,nltk,time,re,os
+import string,nltk,time,re,os,sys
+from Stemmer import Stemmer
 from nltk.tokenize import RegexpTokenizer
 from nltk.corpus import stopwords
 from nltk.stem.porter import *
+import xml.sax
 pattern = r'\w+'
 tokenizer = RegexpTokenizer(pattern)
 stop_words = set(stopwords.words('english')) 
-stemmer = PorterStemmer()
+stemmer = Stemmer("english")
+
+# stemmer = Stemmer('porter')
 path_to_XML = './wiki_dump.xml-p42567204p42663461'
+print(path_to_XML)
+
 fname = []
 
-
-# In[2]:
-
-
+Titles = []
 infobox = {}
 ref = {}
 links = {}
 cat = {}
 title = {}
 body = {}
-Titles = []
-
 
 # In[3]:
 
 
 def inverted_index_step2(cnt_word,inverted_index,doc_id):
-    for key in cnt_word:            
+    for key in cnt_word:
+            
         if key not in inverted_index:
             inner_dict = {'Id':doc_id,'Cnt':cnt_word[key]}
             inverted_index[key] = []
             inverted_index[key].append(inner_dict)
         else:
-            inner_dict = {'Id':cnt,'Cnt':cnt_word[key]}
+            inner_dict = {'Id':doc_id,'Cnt':cnt_word[key]}
             inverted_index[key].append(inner_dict)
 
 
@@ -47,6 +49,8 @@ def inverted_index_step2(cnt_word,inverted_index,doc_id):
 
 
 def inverted_index_step1(words,cnt_word):
+#     print(words)
+    # cnt_word[words]+=1
     for key in words:
         if key not in cnt_word:
             cnt_word[key]=1
@@ -59,14 +63,11 @@ def inverted_index_step1(words,cnt_word):
 
 def word_processing(string):
     tokens = re.findall(r'\w+', string) 
-    
     if string is not None:
         tokens = [w.lower() for w in tokens]#lower_case
         stopped_words = [w for w in tokens if not w in stop_words]#stop_words
-        stemmed_words = [stemmer.stem(word) for word in stopped_words]
-        
+        stemmed_words = [stemmer.stemWord(word) for word in stopped_words]
         return stemmed_words 
-
 
 # In[6]:
 
@@ -82,9 +83,8 @@ def references(string,cnt):
     lines = string.splitlines()
     for val in lines:
         if vis:
-            if len(val):
+            if len(val)>=2:
                 if val[0]=='{' and val[1]=='{':
-#                     print(val)
                     words = word_processing(val)
                     inverted_index_step1(words,count_words)
 
@@ -137,7 +137,7 @@ def Infobox(string,cnt):
     for val in lines:
         sub = val[0:9]
         if vis:
-            if len(val):
+            if len(val)>=2:
                 if val[0]=='}' and val[1]=='}':
                     break
                 else:
@@ -267,25 +267,23 @@ def merge(filename,step,fd):
                 while cnt2:
                     ptr3.write(cnt2)
                     cnt2 = ptr2.readline()
-                    if not cnt2:
-                        break
             elif sd and not ft:
                 while cnt1:
                     ptr3.write(cnt1)
                     cnt1 = ptr1.readline()
-                    if not cnt1:
-                        break
+           
+
                        
+    for f in filename:
+        os.remove(f)
     return new_file
 
 
 # In[13]:
 
 
-start = time.time()
 cnt = 0
-doc_cnt = 100
-block_no = 1
+doc_cnt = 1000
 title_num = []
 doc_num = []
 body_num = []
@@ -297,165 +295,149 @@ info_name = []
 ref_name = []
 link_name = []
 docID = []
-for event,elem in ET.iterparse(path_to_XML,events=("start","end"),parser=None):
-    if event == 'end':
-        tags = elem.tag
-        index = tags.find('}')
-        index+=1
-        tags = tags[index:]
-        if tags=='title':
-            cnt+=1
-#             print(tile)
+os.mkdir('inv_idx')
+os.mkdir('./inv_idx/secondary_index')
+os.mkdir('./inv_idx/all_titles')
+
+
+class DocHandler( xml.sax.ContentHandler ):
+    total_pages = 0
+    total_files = 0
+
+    
+#     total_pagelim = 100
+    
+    def __init__(self):
+        self.data = ""
+        self.pages = 0
+        self.pagelimit = 1000
+        self.indexed_count = 1
+        self.block_no = 1
+        
+    def startElement(self, tag, attributes):
+        if tag == "page":
+            self.data = ""         
+            self.pages += 1
+            DocHandler.total_pages += self.pages   
+        if tag == "title":
+            self.data = ""         
+        if tag == "text":
+            self.data = ""
+             
+    # Call when an elements ends
+    def endElement(self, tag):
+        if tag == "title":
             count_words = {}
-            Titles.append(elem.text)
-            words = word_processing(elem.text)
+            # print(self.pages)
+            Titles.append(self.data)
+            words = word_processing(self.data)
             inverted_index_step1(words,count_words)
-            inverted_index_step2(count_words,title,cnt)
-            docID.append(cnt)
-        elif tags == 'text':
-            string = elem.text
+            inverted_index_step2(count_words,title,self.pages)
+            docID.append(self.pages)
+            
+        if tag == "text":
+            string = self.data
             if string is not None:
-                 category(string,cnt)
-                 references(string,cnt)
-                 external_links(string,cnt)
-                 Infobox(string,cnt)
-                 Body(string,cnt)
-        if cnt == block_no*doc_cnt:
-#             print(cnt,block_no*doc_cnt)
+                 # print("CAT ")
+                 category(string,self.pages)
+#                  print("REF ")
+                 references(string,self.pages)
+#                  print("LINKS ")
+                 external_links(string,self.pages)
+#                  print("INFO ")
+                 Infobox(string,self.pages)
+                 # print(self.pages)
+                 Body(string,self.pages)
+        if ( tag == "page" and self.pages % self.pagelimit == 0 and self.pages>0):
+            print(self.pages/self.pagelimit)
             sorted(body.keys())
-            fname = "./body_invidx_"+str(block_no)+'.txt'
+            sorted(cat.keys())
+            sorted(title.keys())
+            sorted(links.keys())
+            sorted(ref.keys())
+            sorted(infobox.keys())
+            # print(len(body))
+            fname = "./body_invidx_"+str(self.block_no)+'.txt'
             body_name.append(fname)
             fptr = open(fname,'w+')
             write_file(fptr,body)
             fptr.close()
-            fname = "./title_invidx_"+str(block_no)+'.txt'
+            fname = "./title_invidx_"+str(self.block_no)+'.txt'
             title_name.append(fname)
             fptr = open(fname,'w+')
             write_file(fptr,title)
             fptr.close()
-            fname = "./category_invidx_"+str(block_no)+'.txt'
+            fname = "./category_invidx_"+str(self.block_no)+'.txt'
             category_name.append(fname)
             fptr = open(fname,'w+')
             write_file(fptr,cat)
             fptr.close()
-            fname = "./link_invidx_"+str(block_no)+'.txt'
+            fname = "./link_invidx_"+str(self.block_no)+'.txt'
             link_name.append(fname)
             fptr = open(fname,'w+')
             write_file(fptr,links)
             fptr.close()
-            fname = "./ref_invidx_"+str(block_no)+'.txt'
+            fname = "./ref_invidx_"+str(self.block_no)+'.txt'
             ref_name.append(fname)
             fptr = open(fname,'w+')
             write_file(fptr,ref)
             fptr.close()
-            fname = "./info_invidx_"+str(block_no)+'.txt'
+            fname = "./info_invidx_"+str(self.block_no)+'.txt'
             info_name.append(fname)
             fptr = open(fname,'w+')
             write_file(fptr,infobox)
             fptr.close()
-            file_name = './all_titles_'+str(block_no)+'.txt'
+            file_name = './inv_idx/all_titles/'+str(self.block_no)+'.txt'
             fptr = open(file_name,'w+')
             for i in range(len(Titles)):
-                string = str(docID[i])+'$?$'+Titles[i]+'$?$'
+                string = Titles[i]
                 fptr.write(string+os.linesep)
             fptr.close()
-            infobox = {}
-            ref = {}
-            links = {}
-            cat = {}
-            title = {}
-            body = {}
-            Titles = []
-            title_num = []
-            body_num = []
-            doc_num = []
-            docID = []
-            block_no = block_no+1
-print(block_no)
-if cnt!=block_no*doc_cnt:
-    fname = "./body_invidx_"+str(block_no)+'.txt'
-    body_name.append(fname)
-    fptr = open(fname,'w+')
-    write_file(fptr,body)
-    fptr.close()
-    fname = "./title_invidx_"+str(block_no)+'.txt'
-    title_name.append(fname)
-    fptr = open(fname,'w+')
-    write_file(fptr,title)
-    fptr.close()
-    fname = "./category_invidx_"+str(block_no)+'.txt'
-    category_name.append(fname)
-    fptr = open(fname,'w+')
-    write_file(fptr,cat)
-    fptr.close()
-    fname = "./link_invidx_"+str(block_no)+'.txt'
-    link_name.append(fname)
-    fptr = open(fname,'w+')
-    write_file(fptr,links)
-    fptr.close()
-    fname = "./ref_invidx_"+str(block_no)+'.txt'
-    ref_name.append(fname)
-    fptr = open(fname,'w+')
-    write_file(fptr,ref)
-    fptr.close()
-    fname = "./info_invidx_"+str(block_no)+'.txt'
-    info_name.append(fname)
-    fptr = open(fname,'w+')
-    write_file(fptr,infobox)
-    fptr.close()
-    file_name = './all_titles_'+str(block_no)+'.txt'
-    fptr = open(file_name,'w+')
-    for i in range(len(Titles)):
-        string = str(docID[i])+'$?$'+Titles[i]
-        fptr.write(string+os.linesep)
-    fptr.close()
-
-
-
-print(cnt)
-print(block_no*doc_cnt)
-
-
-# In[15]:
+            infobox.clear()
+            ref.clear()
+            links.clear()
+            cat.clear()
+            title.clear()
+            body.clear()
+            Titles.clear()
+            title_num.clear()
+            body_num.clear()
+            doc_num.clear()
+            docID.clear()
+            self.block_no = self.block_no+1
+            
+    def characters(self, content):
+        self.data += content
 
 
 def divide_final_index(file,fd):
     f = open(file,'r')
-    fname = './'+fd+'_search_'
-    block_no = 1
+    print(file)
+    secondary_index = './inv_idx/secondary_index/'+fd+'.txt'
+    fname = './inv_idx/'+fd+'/'
+    os.mkdir(fname)
+    block_no1 = 1
     x = f.readline()
+    ptr1 = open(secondary_index,'w+')
     while x:
         cnt = 1
-        fn = fname+str(block_no)+'.txt'
+        fn = fname+str(block_no1)+'.txt'
         ptr = open(fn,'w+')
         ans = 0
-        fl = 0
         while cnt<=1000:
             if x.find(':')==-1:
-                if cnt==1000:
-                    scnd = word
-                    break
-                if fl:
-                    ptr.write(word+'$#$'+str(ans)+'\n')
-                else:
-                    frst = x
+                if cnt == 1:
+                    ptr1.write(x)
                 cnt+=1
                 ptr.write(x)
-                word = x
-                ans = 0
-                fl = 1
             else:
-                ans+=1
                 ptr.write(x)
             x = f.readline()
             if not x:
-                scnd = word
                 break
-        ptr.write(frst)
-        ptr.write(scnd)
         ptr.close()
-        block_no+=1
-
+        block_no1+=1
+    ptr1.close()
 
 # In[16]:
 
@@ -469,17 +451,37 @@ def intermediate_merge(file,fd):
         step+=1
         if len(file)==1:
             break
-        else:
-            temp_files.append(file)
     divide_final_index(file[0],fd)
-    for tmp_f in temp_files:
-        for tmp in tmp_f:
-            os.remove(tmp)
-    
+ 
+parser = xml.sax.make_parser()
+# turn off namepsaces
+parser.setFeature(xml.sax.handler.feature_namespaces, 0)
+
+# override the default ContextHandler
+Handler = DocHandler()
+parser.setContentHandler( Handler )
+st = time.time()
+parser.parse(path_to_XML)
+
+
+print("Body Merging")
 intermediate_merge(body_name,'body')
+
+print("Title Merging")
 intermediate_merge(title_name,'title')
+
+
+# In[17]:
+
+print("Infobox Merging")
 intermediate_merge(info_name,'infobox')
+
+print("Category Merging")
 intermediate_merge(category_name,'category')
+
+print("References Merging")
 intermediate_merge(ref_name,'ref')
+
+print("Links Merging")
 intermediate_merge(link_name,'links')
 
